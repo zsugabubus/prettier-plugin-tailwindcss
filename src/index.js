@@ -67,18 +67,18 @@ function getClassOrderPolyfill(classes, { env }) {
   return classNamesWithOrder
 }
 
-function sortClasses(
+function sortClassesWithOrder(
   classStr,
   { env, ignoreFirst = false, ignoreLast = false },
 ) {
   if (typeof classStr !== 'string' || classStr === '') {
-    return classStr
+    return { classStr }
   }
 
   // Ignore class attributes containing `{{`, to match Prettier behaviour:
   // https://github.com/prettier/prettier/blob/main/src/language-html/embed.js#L83-L88
   if (classStr.includes('{{')) {
-    return classStr
+    return { classStr }
   }
 
   let result = ''
@@ -100,13 +100,21 @@ function sortClasses(
     suffix = `${whitespace.pop() ?? ''}${classes.pop() ?? ''}`
   }
 
-  classes = sortClassList(classes, { env })
+  const { classList, minOrder, maxOrder } = sortClassList(classes, { env })
 
-  for (let i = 0; i < classes.length; i++) {
-    result += `${classes[i]}${whitespace[i] ?? ''}`
+  for (let i = 0; i < classList.length; i++) {
+    result += `${classList[i]}${whitespace[i] ?? ''}`
   }
 
-  return prefix + result + suffix
+  return {
+    classStr: prefix + result + suffix,
+    minOrder,
+    maxOrder,
+  }
+}
+
+function sortClasses(classStr, options) {
+  return sortClassesWithOrder(classStr, options).classStr
 }
 
 function sortClassList(classList, { env }) {
@@ -114,16 +122,29 @@ function sortClassList(classList, { env }) {
     ? env.context.getClassOrder(classList)
     : getClassOrderPolyfill(classList, { env })
 
-  return classNamesWithOrder
-    .sort(([, a], [, z]) => {
-      if (a === z) return 0
-      // if (a === null) return options.unknownClassPosition === 'start' ? -1 : 1
-      // if (z === null) return options.unknownClassPosition === 'start' ? 1 : -1
-      if (a === null) return -1
-      if (z === null) return 1
-      return bigSign(a - z)
-    })
-    .map(([className]) => className)
+  classNamesWithOrder.sort(([, a], [, z]) => {
+    if (a === z) return 0
+    // if (a === null) return options.unknownClassPosition === 'start' ? -1 : 1
+    // if (z === null) return options.unknownClassPosition === 'start' ? 1 : -1
+    if (a === null) return -1
+    if (z === null) return 1
+    return bigSign(a - z)
+  })
+
+  const first = classNamesWithOrder?.[0]
+  const last = classNamesWithOrder?.[classNamesWithOrder.length - 1]
+
+  return {
+    classList: classNamesWithOrder.map(([className]) => className),
+    minOrder: {
+      main: first?.[1] ?? 0,
+      sub: first?.[0] ?? '',
+    },
+    maxOrder: {
+      main: last?.[1] ?? 0,
+      sub: last?.[0] ?? '',
+    },
+  }
 }
 
 function createParser(parserFormat, transform) {
@@ -542,24 +563,120 @@ function sortTemplateLiteral(node, { env }) {
 }
 
 function transformJavaScript(ast, { env }) {
-  visit(ast, {
-    JSXAttribute(node) {
-      if (!node.value) {
-        return
+  const allowedAttrs = ['class', 'className']
+  const allowedFns = ['classNames', 'clsx']
+
+  const orderCompare = (a, b) =>
+    bigSign((a?.main || 0n) - (b?.main || 0n)) || (a?.sub || '').localeCompare(b?.sub || '')
+
+  const sortNodes = (nodes) => {
+    nodes.sort(
+      ({ meta: a }, { meta: b }) =>
+        bigSign((a?.minOrder?.main || 0n) - (b?.minOrder?.main || 0n)) ||
+        bigSign((a?.maxOrder?.main || 0n) - (b?.maxOrder?.main || 0n)) ||
+        (a?.complexity || 0) - (b?.complexity || 0) ||
+        (a?.minOrder?.sub || '').localeCompare(b?.minOrder?.sub || '') ||
+        (a?.maxOrder?.sub || '').localeCompare(b?.maxOrder?.sub || ''),
+    )
+  }
+
+  const propagateOrder = (path, minOrder, maxOrder) => {
+    while (path.parent) {
+      const meta = (path.node.meta ??= {})
+
+      if (orderCompare(minOrder, meta.minOrder || minOrder) <= 0) meta.minOrder = minOrder
+      if (orderCompare(maxOrder, meta.maxOrder || maxOrder) >= 0) meta.maxOrder = maxOrder
+
+      meta.complexity ??= 0
+      meta.complexity += 1
+
+      path = path.parent
+    }
+  }
+
+  const transformNode = (node) => {
+    astTypes.visit(node, {
+      visitCallExpression(path) {
+        const { node } = path
+
+        if (!allowedFns.includes(node.callee.name))
+          return false;
+
+        this.traverse(path)
+        sortNodes(node.arguments)
+      },
+
+      visitArrayExpression(path) {
+        this.traverse(path)
+        sortNodes(path.node.elements)
+      },
+
+      visitTemplateElement(path) {
+        const { node } = path
+
+        const { classStr, minOrder, maxOrder } = sortClassesWithOrder(node.value.cooked, { env })
+        if (minOrder || maxOrder) propagateOrder(path, minOrder, maxOrder)
+        node.value.raw = classStr
+
+        return false
+      },
+
+      visitLiteral(path) {
+        const { node } = path
+
+        if (typeof node.value !== 'string') return false
+
+        const { classStr, minOrder, maxOrder } = sortClassesWithOrder(node.value, { env })
+        if (minOrder || maxOrder) propagateOrder(path, minOrder, maxOrder)
+        node.raw = node.raw[0] + classStr + node.raw.slice(-1)
+
+        return false
+      },
+    })
+  }
+
+  astTypes.visit(ast, {
+    visitCallExpression(path) {
+      const { node } = path
+
+      if (allowedFns.includes(node.callee.name)) {
+        transformNode(node)
+        return false
       }
-      if (['class', 'className'].includes(node.name.name)) {
-        if (isStringLiteral(node.value)) {
-          sortStringLiteral(node.value, { env })
-        } else if (node.value.type === 'JSXExpressionContainer') {
-          visit(node.value, (node, parent, key) => {
-            if (isStringLiteral(node)) {
-              sortStringLiteral(node, { env })
-            } else if (node.type === 'TemplateLiteral') {
-              sortTemplateLiteral(node, { env })
-            }
-          })
-        }
+
+      this.traverse(path)
+    },
+
+    visitTaggedTemplateExpression(path) {
+      const { node } = path
+
+      if (allowedFns.includes(node.tag.name)) {
+        transformNode(node)
       }
+
+      return false
+    },
+
+    visitProperty(path) {
+      const {
+        node: { key, value },
+      } = path
+
+      if (key.type === 'Identifier' && allowedAttrs.includes(key.name)) {
+        transformNode(value)
+      }
+
+      return false
+    },
+
+    visitJSXAttribute(path) {
+      const { node } = path
+
+      if (allowedAttrs.includes(node.name.name)) {
+        transformNode(node)
+      }
+
+      return false
     },
   })
 }
@@ -765,7 +882,7 @@ function transformPug(ast, { env }) {
     const classes = ast.tokens
       .slice(startIdx, endIdx + 1)
       .map((token) => token.val)
-    const classList = sortClassList(classes, { env })
+    const { classList } = sortClassList(classes, { env })
 
     for (let i = startIdx; i <= endIdx; i++) {
       ast.tokens[i].val = classList[i - startIdx]
