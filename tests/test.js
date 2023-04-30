@@ -120,6 +120,14 @@ let javascript = [
     ";<div class={x + '   sm:p-0   p-0   ' + ' ' + '   '} />",
     ";<div class={x + ' p-0 sm:p-0 ' + ' ' + ' '} />",
   ],
+  [
+    ";<div class={'   sm:p-0   p-0   '} />",
+    ";<div class={'p-0 sm:p-0'} />",
+  ],
+  [
+    ';<div class="   sm:p-0   p-0 \t  " />',
+    ';<div class="p-0 sm:p-0" />',
+  ],
 ]
 javascript = javascript.concat(
   javascript.map((test) => test.map((t) => t.replace(/class/g, 'className'))),

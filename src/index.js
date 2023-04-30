@@ -69,7 +69,7 @@ function getClassOrderPolyfill(classes, { env }) {
 
 function sortClasses(
   classStr,
-  { env, ignoreFirst = false, ignoreLast = false },
+  { env, ignoreFirst = false, ignoreLast = false, trimWhitespace = false },
 ) {
   if (typeof classStr !== 'string' || classStr === '') {
     return classStr
@@ -114,6 +114,7 @@ function sortClasses(
   // - Never ever fully remove whitespace where previously there was whitespace
   //   since it maybe used to separate tokens: `a + " b " + "c"`.
   result = result.replace(/(^|\S) +(\S|$)/g, '$1 $2')
+  if (trimWhitespace) result = result.trim();
 
   return prefix + result + suffix
 }
@@ -488,8 +489,8 @@ function transformLiquid(ast, { env }) {
   }
 }
 
-function sortStringLiteral(node, { env }) {
-  let result = sortClasses(node.value, { env })
+function sortStringLiteral(node, options) {
+  let result = sortClasses(node.value, options)
   let didChange = result !== node.value
   node.value = result
   if (node.extra) {
@@ -558,11 +559,12 @@ function transformJavaScript(ast, { env }) {
       }
       if (['class', 'className'].includes(node.name.name)) {
         if (isStringLiteral(node.value)) {
-          sortStringLiteral(node.value, { env })
+          sortStringLiteral(node.value, { env, trimWhitespace: true })
         } else if (node.value.type === 'JSXExpressionContainer') {
           visit(node.value, (node, parent, key) => {
             if (isStringLiteral(node)) {
-              sortStringLiteral(node, { env })
+              const trimWhitespace = parent?.type === 'JSXExpressionContainer'
+              sortStringLiteral(node, { env, trimWhitespace })
             } else if (node.type === 'TemplateLiteral') {
               sortTemplateLiteral(node, { env })
             }
