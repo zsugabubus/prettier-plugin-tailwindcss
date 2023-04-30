@@ -104,6 +104,22 @@ let javascript = [
     `;<div class={\`sm:p-0 p-0 \${someVar}sm:block md:inline flex\`} />`,
     `;<div class={\`p-0 sm:p-0 \${someVar}sm:block flex md:inline\`} />`,
   ],
+  [
+    ';<div class={`   \n   sm:p-0   \n   p-0   \n   `} />',
+    ';<div\n  class={`   \n   p-0   \n   sm:p-0   \n   `}\n/>',
+  ],
+  [
+    ";<div class={`\nsm:p-0  ${x}   p-0`} />",
+    ";<div\n  class={`\nsm:p-0 ${x} p-0`}\n/>",
+  ],
+  [
+    ';<div class={`   \t   sm:p-0   \t   p-0   \t   `} />',
+    ';<div class={`   \t   p-0   \t   sm:p-0   \t   `} />',
+  ],
+  [
+    ";<div class={x + '   sm:p-0   p-0   ' + ' ' + '   '} />",
+    ";<div class={x + ' p-0 sm:p-0 ' + ' ' + ' '} />",
+  ],
 ]
 javascript = javascript.concat(
   javascript.map((test) => test.map((t) => t.replace(/class/g, 'className'))),

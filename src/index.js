@@ -106,6 +106,15 @@ function sortClasses(
     result += `${classes[i]}${whitespace[i] ?? ''}`
   }
 
+  // Collapse leading, trailing and intermediate whitespace.
+  //
+  // - Do not collapse whitespace across lines because it may cause unwanted
+  //   formatting issues.
+  //
+  // - Never ever fully remove whitespace where previously there was whitespace
+  //   since it maybe used to separate tokens: `a + " b " + "c"`.
+  result = result.replace(/(^|\S) +(\S|$)/g, '$1 $2')
+
   return prefix + result + suffix
 }
 
